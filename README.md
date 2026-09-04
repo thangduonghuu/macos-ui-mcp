@@ -3,10 +3,15 @@
 A Playwright-style tool that lets **Claude inspect and drive a native macOS app's UI
 while you build it — without Screen Recording permission.**
 
-Instead of capturing the screen, the app renders itself. A tiny debug-only Swift package
-(`swift-harness/`) exposes the app's view tree and an in-process PNG renderer over
-localhost HTTP; an MCP server (`src/`) turns that into tools Claude can call:
-`list_windows`, `get_ui_tree`, `screenshot`, `click`, `type`, `wait_for`, `invoke_action`.
+Instead of capturing the screen, the app renders itself. A tiny debug-only harness
+inside your app exposes its view tree and an in-process PNG renderer over localhost
+HTTP; an MCP server (`src/`) turns that into tools Claude can call: `list_windows`,
+`get_ui_tree`, `screenshot`, `click`, `type`, `wait_for`, `invoke_action`.
+
+Two harness implementations, same HTTP contract, same MCP server:
+
+- **`swift-harness/`** — native AppKit / SwiftUI apps (`NSView` tree)
+- **`tauri-harness/`** — Tauri v2 apps (webview DOM)
 
 See [IDEA.md](./IDEA.md) for the design rationale, the architecture comparison, and the
 project goals.
@@ -22,19 +27,32 @@ Claude Code ──MCP(stdio)──> macos-ui-mcp server ──HTTP──> AppMCP
 | `src/` | the MCP server (TypeScript) |
 | `src/contract.ts` | the harness HTTP wire format (types + zod schemas) |
 | `test/` | vitest suite + an in-memory mock harness; `e2e.test.ts` drives the real app |
-| `swift-harness/` | drop-in reference harness for the macOS app |
+| `swift-harness/` | drop-in harness for native AppKit / SwiftUI apps |
+| `tauri-harness/` | drop-in harness (Tauri v2 plugin) for webview apps |
 | `showcase/` | a minimal AppKit app that links the harness — used by the e2e test |
 
 ## Use it
 
-### 1. Add the harness to your macOS app (DEBUG builds only)
+### 1. Add the harness to your app (DEBUG builds only)
 
-See [`swift-harness/README.md`](./swift-harness/README.md). One line in your `AppDelegate`:
+**AppKit / SwiftUI** — see [`swift-harness/README.md`](./swift-harness/README.md). One line
+in your `AppDelegate`:
 
 ```swift
 #if DEBUG
 AppMCP.start()   // opens http://127.0.0.1:8787
 #endif
+```
+
+**Tauri v2** — see [`tauri-harness/README.md`](./tauri-harness/README.md). Register the
+plugin behind `#[cfg(debug_assertions)]` and add `"macos-ui-mcp:default"` to your
+capabilities:
+
+```rust
+#[cfg(debug_assertions)]
+{
+    builder = builder.plugin(tauri_plugin_macos_ui_mcp::init());
+}
 ```
 
 ### 2. Build the MCP server
@@ -92,13 +110,15 @@ Used by `click`, `type`, `screenshot`, `wait_for`:
 
 ## Status
 
-- v0.1 — macOS / AppKit. All 7 tools implemented. 38 unit tests + a 5-case end-to-end
-  test that drives the `showcase/` app through the real Swift harness. Verified: tree,
+- **AppKit / SwiftUI** (`swift-harness/`) — all 7 tools. 38 unit tests + a 5-case
+  end-to-end test driving the `showcase/` app through the real harness. Verified: tree,
   in-process PNG snapshot, tap, set-text, action hooks — Screen Recording off.
+- **Tauri v2** (`tauri-harness/`) — plugin compiles (`cargo check` / `clippy` clean);
+  full DOM tree, DOM-event interaction, dependency-free snapshot. Not yet exercised by an
+  automated end-to-end test.
 - Not yet — SwiftUI-native tree (AppKit introspection only for now), Windows adapter,
   third-party-app inspection via the Accessibility API.
 
 ## License
 
 [MIT](./LICENSE) © 2026 Thang Duong
-# macos-ui-mcp

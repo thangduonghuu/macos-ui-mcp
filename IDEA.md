@@ -84,7 +84,9 @@ captures nothing but the app. Cost: one-time integration per framework.
 
 - **Electron** → Playwright drives it already (`_electron`), full DOM
 - **Flutter** → `flutter_driver` + VM service protocol → widget tree
-- **Tauri** → Playwright/CDP on the webview
+- **Tauri** → on macOS the webview is WKWebView, which Playwright/CDP can't attach to.
+  Use the Architecture B route instead: `tauri-harness/` is a DEBUG-only Tauri v2 plugin
+  that injects a webview agent and serves the same HTTP contract as `swift-harness/`.
 - **Qt / GTK** → AT-SPI, or Squish
 
 ---
@@ -93,8 +95,9 @@ captures nothing but the app. Cost: one-time integration per framework.
 
 ### The branch that matters
 
-**Electron / Flutter / Tauri / React Native → build nothing.** Use the framework's own
-tooling (above).
+**Electron / Flutter / React Native → build nothing.** Use the framework's own tooling
+(above). **Tauri** → use `tauri-harness/` (a webview-DOM harness on the same contract),
+since Playwright/CDP can't attach to macOS WKWebView.
 
 **Native SwiftUI/AppKit** (this project) → build **Architecture B: an in-app dev harness**
 exposed through a TypeScript MCP server.
@@ -201,9 +204,14 @@ macos-ui-mcp/
     mockHarness.ts      Node HTTP server implementing the harness contract
     e2e.test.ts         drives showcase/ through the real Swift harness
     *.test.ts
-  swift-harness/        reference in-app harness package (drop into the macOS app)
+  swift-harness/        in-app harness for AppKit / SwiftUI apps
     Package.swift
     Sources/AppMCPHarness/*.swift
+    README.md
+  tauri-harness/        in-app harness for Tauri v2 apps (Rust plugin + injected agent.js)
+    Cargo.toml  build.rs  permissions/
+    src/*.rs
+    guest-js/agent.js
     README.md
   showcase/             minimal AppKit app that links the harness (used by e2e.test.ts)
 ```

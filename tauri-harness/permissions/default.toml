@@ -1,0 +1,5 @@
+"$schema" = "schemas/schema.json"
+
+[default]
+description = "Allows the injected harness agent to deliver tree / snapshot / action results back to the plugin. DEBUG builds only."
+permissions = ["allow-deliver"]

@@ -4,3 +4,5 @@ dist/
 .DS_Store
 swift-harness/.build/
 showcase/.build/
+tauri-harness/target/
+tauri-harness/permissions/schemas/
