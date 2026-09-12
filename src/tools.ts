@@ -2,6 +2,7 @@
  * Pure tool implementations. No dependency on the MCP SDK so they can be
  * unit-tested directly against a mock harness.
  */
+import { spawn } from "node:child_process";
 import type { UINode } from "./contract.js";
 import { HarnessClient } from "./harnessClient.js";
 import { findAll, findNode, parseSelector } from "./selector.js";
@@ -19,6 +20,57 @@ const fail = (text: string): ToolResult => ({
   content: [{ type: "text", text }],
   isError: true,
 });
+
+export async function launchApp(
+  client: HarnessClient,
+  args: {
+    path: string;
+    args?: string[];
+    env?: Record<string, string>;
+    waitMs?: number;
+    pollMs?: number;
+  },
+  spawnImpl: typeof spawn = spawn,
+): Promise<ToolResult> {
+  const waitMs = args.waitMs ?? 10000;
+  const pollMs = args.pollMs ?? 200;
+  const isBundle = args.path.endsWith(".app");
+  const cmd = isBundle ? "open" : args.path;
+  const cmdArgs = isBundle
+    ? args.args?.length
+      ? [args.path, "--args", ...args.args]
+      : [args.path]
+    : (args.args ?? []);
+
+  let spawnError: Error | undefined;
+  try {
+    const child = spawnImpl(cmd, cmdArgs, {
+      detached: true,
+      stdio: "ignore",
+      env: args.env ? { ...process.env, ...args.env } : undefined,
+    });
+    child.on("error", (err) => {
+      spawnError = err;
+    });
+    child.unref();
+  } catch (err) {
+    return fail(`failed to launch ${args.path}: ${err instanceof Error ? err.message : String(err)}`);
+  }
+
+  const deadline = Date.now() + waitMs;
+  for (;;) {
+    try {
+      const { windows } = await client.windows();
+      return ok(`launched ${args.path}; harness is up (${windows.length} window(s))`);
+    } catch {
+      if (spawnError) return fail(`failed to launch ${args.path}: ${spawnError.message}`);
+      if (Date.now() >= deadline) {
+        return fail(`launched ${args.path} but harness did not become reachable within ${waitMs}ms`);
+      }
+      await sleep(Math.min(pollMs, Math.max(0, deadline - Date.now())));
+    }
+  }
+}
 
 export async function listWindows(client: HarnessClient): Promise<ToolResult> {
   const { windows } = await client.windows();

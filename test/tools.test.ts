@@ -1,7 +1,28 @@
+import { EventEmitter } from "node:events";
 import { afterEach, describe, expect, it } from "vitest";
 import { isPng, HarnessClient } from "../src/harnessClient.js";
 import * as tools from "../src/tools.js";
 import { startMockHarness, type MockHarness, type MockOptions } from "./mockHarness.js";
+
+interface FakeSpawn {
+  impl: (cmd: string, args: readonly string[]) => EventEmitter & { unref(): void };
+  calls: Array<{ cmd: string; args: string[] }>;
+  fail: (err: Error) => void;
+}
+
+function fakeSpawn(): FakeSpawn {
+  const calls: Array<{ cmd: string; args: string[] }> = [];
+  let child: EventEmitter | undefined;
+  return {
+    calls,
+    impl: (cmd, args) => {
+      calls.push({ cmd, args: [...args] });
+      child = new EventEmitter();
+      return Object.assign(child, { unref: () => {} });
+    },
+    fail: (err) => child?.emit("error", err),
+  };
+}
 
 let harness: MockHarness;
 afterEach(() => harness?.close());
@@ -13,6 +34,69 @@ async function setup(opts?: MockOptions): Promise<HarnessClient> {
 
 const textOf = (r: tools.ToolResult) =>
   r.content.map((c) => (c.type === "text" ? c.text : "")).join("");
+
+describe("launch_app", () => {
+  it("opens a .app bundle via `open` and waits for the harness", async () => {
+    const c = await setup();
+    const fake = fakeSpawn();
+    const r = await tools.launchApp(c, { path: "/Applications/Foo.app" }, fake.impl as never);
+    expect(r.isError).toBeFalsy();
+    expect(fake.calls).toEqual([{ cmd: "open", args: ["/Applications/Foo.app"] }]);
+    expect(textOf(r)).toMatch(/launched \/Applications\/Foo\.app; harness is up/);
+  });
+
+  it("passes extra args to `open` as --args", async () => {
+    const c = await setup();
+    const fake = fakeSpawn();
+    await tools.launchApp(
+      c,
+      { path: "/Applications/Foo.app", args: ["--flag"] },
+      fake.impl as never,
+    );
+    expect(fake.calls).toEqual([
+      { cmd: "open", args: ["/Applications/Foo.app", "--args", "--flag"] },
+    ]);
+  });
+
+  it("spawns a plain executable path directly", async () => {
+    const c = await setup();
+    const fake = fakeSpawn();
+    await tools.launchApp(
+      c,
+      { path: "/usr/local/bin/myapp", args: ["--debug"] },
+      fake.impl as never,
+    );
+    expect(fake.calls).toEqual([{ cmd: "/usr/local/bin/myapp", args: ["--debug"] }]);
+  });
+
+  it("surfaces a spawn error instead of waiting out the timeout", async () => {
+    await setup();
+    const unreachable = new HarnessClient("http://127.0.0.1:1");
+    const fake = fakeSpawn();
+    const promise = tools.launchApp(
+      unreachable,
+      { path: "/bad/path", waitMs: 5000 },
+      fake.impl as never,
+    );
+    fake.fail(new Error("spawn ENOENT"));
+    const r = await promise;
+    expect(r.isError).toBe(true);
+    expect(textOf(r)).toMatch(/failed to launch \/bad\/path: spawn ENOENT/);
+  });
+
+  it("times out if the harness never comes up", async () => {
+    await setup();
+    const unreachable = new HarnessClient("http://127.0.0.1:1");
+    const fake = fakeSpawn();
+    const r = await tools.launchApp(
+      unreachable,
+      { path: "/bad/path", waitMs: 200, pollMs: 50 },
+      fake.impl as never,
+    );
+    expect(r.isError).toBe(true);
+    expect(textOf(r)).toMatch(/did not become reachable within 200ms/);
+  });
+});
 
 describe("list_windows / get_ui_tree", () => {
   it("lists windows as JSON text", async () => {

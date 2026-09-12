@@ -36,6 +36,7 @@ describe("MCP server", () => {
         "click",
         "get_ui_tree",
         "invoke_action",
+        "launch_app",
         "list_windows",
         "screenshot",
         "type",

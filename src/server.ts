@@ -19,6 +19,28 @@ export function createServer(client: HarnessClient): McpServer {
   const server = new McpServer({ name: "macos-ui-mcp", version: "0.1.0" });
 
   server.registerTool(
+    "launch_app",
+    {
+      title: "Launch app",
+      description:
+        "Launch the target app and wait for its harness to come up. Pass a .app bundle path " +
+        "(opened via `open`, which reuses an already-running instance instead of duplicating it) " +
+        "or a plain executable path (spawned directly).",
+      inputSchema: {
+        path: z.string().describe("Path to a .app bundle or an executable."),
+        args: z.array(z.string()).optional().describe("Extra CLI args passed to the app."),
+        env: z.record(z.string()).optional().describe("Extra environment variables."),
+        waitMs: z
+          .number()
+          .optional()
+          .describe("How long to wait for the harness to come up. Default 10000."),
+        pollMs: z.number().optional().describe("Poll interval while waiting. Default 200."),
+      },
+    },
+    wrap(tools.launchApp, client),
+  );
+
+  server.registerTool(
     "list_windows",
     {
       title: "List windows",
