@@ -1,0 +1,9 @@
+{
+  "expo": {
+    "name": "ExpoRnExample",
+    "slug": "expo-rn-example",
+    "version": "0.1.0",
+    "ios": { "bundleIdentifier": "dev.app-mcp.expo-rn-example" },
+    "plugins": [["app-mcp-expo-plugin", { "port": 8794 }]]
+  }
+}

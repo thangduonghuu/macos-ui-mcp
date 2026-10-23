@@ -1,11 +1,23 @@
+#if os(macOS)
 import AppKit
+#else
+import UIKit
+#endif
 
 enum Router {
-    /// Entry point from `HTTPServer`. Hops to the main thread once; every AppKit
+    /// Entry point from `HTTPServer`. Hops to the main thread once; every UI
     /// access below then runs on main with no further dispatching.
     static func handle(_ request: HTTPRequest) -> HTTPResponse {
+        #if os(iOS)
+        if let response = Gestures.handle(request) { return response }
+        let response = DispatchQueue.main.sync { route(request) }
+        // Let mutations (typing, actions) reach the app's handlers before replying.
+        if request.method == "POST" { Gestures.settle() }
+        return response
+        #else
         if Thread.isMainThread { return route(request) }
         return DispatchQueue.main.sync { route(request) }
+        #endif
     }
 
     private static func route(_ request: HTTPRequest) -> HTTPResponse {
@@ -17,25 +29,21 @@ enum Router {
             guard let window = WindowInfo.resolve(id: request.query["window"]) else {
                 return .json(["error": "no matching window"], status: 404)
             }
-            let root = window.window.contentView ?? NSView()
-            return .json(["window": window.dictionary, "tree": ViewTree.node(for: root)])
+            return .json(["window": window.dictionary, "tree": ViewTree.node(for: window.rootView)])
 
         case ("GET", "/snapshot"):
             guard let window = WindowInfo.resolve(id: request.query["window"]) else {
                 return .json(["error": "no matching window"], status: 404)
             }
-            let target: NSView
-            if let nodeId = request.query["node"],
-               let found = ViewTree.find(nodeId, in: window.window.contentView) {
-                target = found
-            } else {
-                target = window.window.contentView ?? NSView()
-            }
+            let target = request.query["node"].flatMap { ViewTree.find($0, in: window.rootView) }
+                ?? window.rootView
             guard let png = Snapshot.png(of: target) else {
                 return .json(["error": "render failed"], status: 500)
             }
             return .png(png)
 
+        #if os(macOS)
+        // iOS handles /tap (and /tapAt, /scroll) in `Gestures`, off the main thread.
         case ("POST", "/tap"):
             return action(request) { body in
                 guard let id = body["node"] as? String,
@@ -43,6 +51,7 @@ enum Router {
                 Actions.tap(view)
                 return (true, nil)
             }
+        #endif
 
         case ("POST", "/setText"):
             return action(request) { body in

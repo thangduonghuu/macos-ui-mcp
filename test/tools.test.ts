@@ -84,6 +84,52 @@ describe("launch_app", () => {
     expect(textOf(r)).toMatch(/failed to launch \/bad\/path: spawn ENOENT/);
   });
 
+  it("installs and launches on the iOS Simulator via simctl", async () => {
+    const c = await setup();
+    const fake = fakeSpawn();
+    const execCalls: Array<{ cmd: string; args: string[]; env?: NodeJS.ProcessEnv }> = [];
+    const exec: tools.ExecImpl = async (cmd, args, env) => {
+      execCalls.push({ cmd, args, env });
+      return cmd === "/usr/bin/plutil" ? "com.example.Foo\n" : "";
+    };
+    const r = await tools.launchApp(
+      c,
+      { path: "/build/Foo.app", simulator: "booted", args: ["-flag"], env: { MODE: "test" } },
+      fake.impl as never,
+      exec,
+    );
+    expect(r.isError).toBeFalsy();
+    expect(fake.calls).toEqual([]);
+    expect(execCalls.map(({ cmd, args }) => ({ cmd, args }))).toEqual([
+      {
+        cmd: "/usr/bin/plutil",
+        args: ["-extract", "CFBundleIdentifier", "raw", "-o", "-", "/build/Foo.app/Info.plist"],
+      },
+      { cmd: "xcrun", args: ["simctl", "install", "booted", "/build/Foo.app"] },
+      {
+        cmd: "xcrun",
+        args: ["simctl", "launch", "--terminate-running-process", "booted", "com.example.Foo", "-flag"],
+      },
+    ]);
+    expect(execCalls[2].env?.SIMCTL_CHILD_MODE).toBe("test");
+  });
+
+  it("surfaces a simctl failure", async () => {
+    const c = await setup();
+    const exec: tools.ExecImpl = async (cmd) => {
+      if (cmd === "xcrun") throw new Error("No devices are booted.");
+      return "com.example.Foo";
+    };
+    const r = await tools.launchApp(
+      c,
+      { path: "/build/Foo.app", simulator: "booted" },
+      fakeSpawn().impl as never,
+      exec,
+    );
+    expect(r.isError).toBe(true);
+    expect(textOf(r)).toMatch(/on simulator booted: No devices are booted\./);
+  });
+
   it("times out if the harness never comes up", async () => {
     await setup();
     const unreachable = new HarnessClient("http://127.0.0.1:1");
@@ -95,6 +141,35 @@ describe("launch_app", () => {
     );
     expect(r.isError).toBe(true);
     expect(textOf(r)).toMatch(/did not become reachable within 200ms/);
+  });
+});
+
+describe("tap_at / scroll", () => {
+  it("taps at a point", async () => {
+    const c = await setup();
+    const r = await tools.tapAt(c, { x: 10, y: 20 });
+    expect(textOf(r)).toBe("tapped at (10, 20)");
+    expect(harness.calls).toContain("POST /tapAt 10,20");
+  });
+
+  it("scrolls the scroll view resolved from a selector", async () => {
+    const c = await setup();
+    const r = await tools.scroll(c, { selector: "#email", direction: "down", amount: 300 });
+    expect(textOf(r)).toBe("scrolled down by 300pt");
+    expect(harness.calls).toContain("POST /scroll email down 300");
+  });
+
+  it("scrolls without a selector", async () => {
+    const c = await setup();
+    await tools.scroll(c, { direction: "up" });
+    expect(harness.calls).toContain("POST /scroll - up -");
+  });
+
+  it("surfaces a scroll failure", async () => {
+    const c = await setup({ failActions: true });
+    const r = await tools.scroll(c, { direction: "down" });
+    expect(r.isError).toBe(true);
+    expect(textOf(r)).toMatch(/scroll failed: forced failure/);
   });
 });
 
@@ -161,6 +236,38 @@ describe("click", () => {
     const r = await tools.click(c, { selector: "button" });
     expect(r.isError).toBe(true);
     expect(textOf(r)).toMatch(/ambiguous \(2 matches: save, cancel\)/);
+  });
+
+  it("treats a match nested in another match as the same element", async () => {
+    // RN: a Pressable's label comes from the Text inside it, so both match "Next".
+    const c = await setup({
+      tree: {
+        id: "root",
+        role: "group",
+        children: [
+          { id: "next", role: "group", label: "Next", children: [{ id: "t", role: "text", label: "Next" }] },
+        ],
+      },
+    });
+    const r = await tools.click(c, { selector: '"Next"' });
+    expect(r.isError).toBeFalsy();
+    expect(harness.calls).toContain("POST /tap next");
+  });
+
+  it("prefers the reachable match over a covered one", async () => {
+    const c = await setup({
+      tree: {
+        id: "root",
+        role: "group",
+        children: [
+          { id: "old", role: "button", label: "Back", hittable: false },
+          { id: "new", role: "button", label: "Back" },
+        ],
+      },
+    });
+    const r = await tools.click(c, { selector: 'Button "Back"' });
+    expect(r.isError).toBeFalsy();
+    expect(harness.calls).toContain("POST /tap new");
   });
 
   it("rejects a selector with no match", async () => {

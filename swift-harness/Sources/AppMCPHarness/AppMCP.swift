@@ -1,4 +1,4 @@
-import AppKit
+import Foundation
 
 /// Dev-only harness that lets the `macos-ui-mcp` MCP server inspect and drive
 /// this app's UI over localhost HTTP. Compile it into **DEBUG builds only** — it

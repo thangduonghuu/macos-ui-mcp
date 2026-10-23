@@ -8,6 +8,8 @@
  *   POST /tap      { node: string }        -> ActionResponse
  *   POST /setText  { node: string, text }  -> ActionResponse
  *   POST /action   { name: string }        -> ActionResponse
+ *   POST /tapAt    { x, y, window? }       -> ActionResponse       (iOS harness only)
+ *   POST /scroll   { node?, window?, direction, amount? } -> ActionResponse (iOS harness only)
  */
 import { z } from "zod";
 
@@ -21,6 +23,8 @@ export interface UINode {
   enabled?: boolean;
   focused?: boolean;
   frame?: { x: number; y: number; width: number; height: number };
+  /** false when a tap at the node's center would land on something covering it. */
+  hittable?: boolean;
   children?: UINode[];
 }
 
@@ -40,6 +44,7 @@ export const UINodeSchema: z.ZodType<UINode> = z.lazy(() =>
     enabled: z.boolean().optional(),
     focused: z.boolean().optional(),
     frame: FrameSchema.optional(),
+    hittable: z.boolean().optional(),
     children: z.array(UINodeSchema).optional(),
   }),
 );

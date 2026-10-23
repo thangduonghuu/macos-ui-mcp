@@ -19,6 +19,8 @@ export class HarnessError extends Error {
 
 type FetchLike = typeof fetch;
 
+export type ScrollDirection = "up" | "down" | "left" | "right";
+
 /** HTTP client for the in-app dev harness. One instance per MCP server process. */
 export class HarnessClient {
   constructor(
@@ -105,6 +107,24 @@ export class HarnessClient {
 
   action(name: string): Promise<ActionResponse> {
     return this.postJson("/action", ActionResponseSchema, { name });
+  }
+
+  tapAt(x: number, y: number, windowId?: string): Promise<ActionResponse> {
+    return this.postJson("/tapAt", ActionResponseSchema, { x, y, window: windowId });
+  }
+
+  scroll(opts: {
+    nodeId?: string;
+    windowId?: string;
+    direction: ScrollDirection;
+    amount?: number;
+  }): Promise<ActionResponse> {
+    return this.postJson("/scroll", ActionResponseSchema, {
+      node: opts.nodeId,
+      window: opts.windowId,
+      direction: opts.direction,
+      amount: opts.amount,
+    });
   }
 }
 
