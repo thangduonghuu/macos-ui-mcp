@@ -2,9 +2,9 @@
  * Pure tool implementations. No dependency on the MCP SDK so they can be
  * unit-tested directly against a mock harness.
  */
-import { spawn } from "node:child_process";
+import { execFile, spawn } from "node:child_process";
 import type { UINode } from "./contract.js";
-import { HarnessClient } from "./harnessClient.js";
+import { HarnessClient, type ScrollDirection } from "./harnessClient.js";
 import { findAll, findNode, parseSelector } from "./selector.js";
 
 export interface ToolResult {
@@ -21,40 +21,86 @@ const fail = (text: string): ToolResult => ({
   isError: true,
 });
 
+/** Runs a command to completion and resolves with its stdout. Injectable for tests. */
+export type ExecImpl = (cmd: string, args: string[], env?: NodeJS.ProcessEnv) => Promise<string>;
+
+const execDefault: ExecImpl = (cmd, args, env) =>
+  new Promise((resolve, reject) => {
+    execFile(cmd, args, { env }, (err, stdout, stderr) => {
+      if (err) reject(new Error(stderr.trim() || err.message));
+      else resolve(stdout);
+    });
+  });
+
 export async function launchApp(
   client: HarnessClient,
   args: {
     path: string;
     args?: string[];
     env?: Record<string, string>;
+    simulator?: string;
     waitMs?: number;
     pollMs?: number;
   },
   spawnImpl: typeof spawn = spawn,
+  execImpl: ExecImpl = execDefault,
 ): Promise<ToolResult> {
   const waitMs = args.waitMs ?? 10000;
   const pollMs = args.pollMs ?? 200;
-  const isBundle = args.path.endsWith(".app");
-  const cmd = isBundle ? "open" : args.path;
-  const cmdArgs = isBundle
-    ? args.args?.length
-      ? [args.path, "--args", ...args.args]
-      : [args.path]
-    : (args.args ?? []);
-
   let spawnError: Error | undefined;
-  try {
-    const child = spawnImpl(cmd, cmdArgs, {
-      detached: true,
-      stdio: "ignore",
-      env: args.env ? { ...process.env, ...args.env } : undefined,
-    });
-    child.on("error", (err) => {
-      spawnError = err;
-    });
-    child.unref();
-  } catch (err) {
-    return fail(`failed to launch ${args.path}: ${err instanceof Error ? err.message : String(err)}`);
+
+  if (args.simulator) {
+    // iOS Simulator: install the (simulator-built) .app, then launch it by bundle id.
+    // Simulator apps share the host's loopback, so the harness URL is unchanged.
+    const sim = args.simulator;
+    try {
+      const bundleId = (
+        await execImpl("/usr/bin/plutil", [
+          "-extract", "CFBundleIdentifier", "raw", "-o", "-", `${args.path}/Info.plist`,
+        ])
+      ).trim();
+      await execImpl("xcrun", ["simctl", "install", sim, args.path]);
+      // simctl forwards env vars to the app only when prefixed with SIMCTL_CHILD_.
+      const childEnv = args.env
+        ? {
+            ...process.env,
+            ...Object.fromEntries(
+              Object.entries(args.env).map(([k, v]) => [`SIMCTL_CHILD_${k}`, v]),
+            ),
+          }
+        : undefined;
+      await execImpl(
+        "xcrun",
+        ["simctl", "launch", "--terminate-running-process", sim, bundleId, ...(args.args ?? [])],
+        childEnv,
+      );
+    } catch (err) {
+      return fail(
+        `failed to launch ${args.path} on simulator ${sim}: ${err instanceof Error ? err.message : String(err)}`,
+      );
+    }
+  } else {
+    const isBundle = args.path.endsWith(".app");
+    const cmd = isBundle ? "open" : args.path;
+    const cmdArgs = isBundle
+      ? args.args?.length
+        ? [args.path, "--args", ...args.args]
+        : [args.path]
+      : (args.args ?? []);
+
+    try {
+      const child = spawnImpl(cmd, cmdArgs, {
+        detached: true,
+        stdio: "ignore",
+        env: args.env ? { ...process.env, ...args.env } : undefined,
+      });
+      child.on("error", (err) => {
+        spawnError = err;
+      });
+      child.unref();
+    } catch (err) {
+      return fail(`failed to launch ${args.path}: ${err instanceof Error ? err.message : String(err)}`);
+    }
   }
 
   const deadline = Date.now() + waitMs;
@@ -128,6 +174,38 @@ export async function type(
     : fail(`setText failed on ${resolved.node.id}: ${res.detail ?? "unknown error"}`);
 }
 
+export async function tapAt(
+  client: HarnessClient,
+  args: { x: number; y: number; window?: string },
+): Promise<ToolResult> {
+  const res = await client.tapAt(args.x, args.y, args.window);
+  return res.ok
+    ? ok(`tapped at (${args.x}, ${args.y})`)
+    : fail(`tap at (${args.x}, ${args.y}) failed: ${res.detail ?? "unknown error"}`);
+}
+
+export async function scroll(
+  client: HarnessClient,
+  args: { selector?: string; direction: ScrollDirection; amount?: number; window?: string },
+): Promise<ToolResult> {
+  let nodeId: string | undefined;
+  if (args.selector) {
+    const resolved = await resolveOne(client, args.selector, args.window);
+    if ("error" in resolved) return fail(resolved.error);
+    nodeId = resolved.node.id;
+  }
+  const res = await client.scroll({
+    nodeId,
+    windowId: args.window,
+    direction: args.direction,
+    amount: args.amount,
+  });
+  const what = args.amount === undefined ? args.direction : `${args.direction} by ${args.amount}pt`;
+  return res.ok
+    ? ok(`scrolled ${what}${res.detail ? ` (${res.detail})` : ""}`)
+    : fail(`scroll failed: ${res.detail ?? "unknown error"}`);
+}
+
 export async function invokeAction(
   client: HarnessClient,
   args: { name: string },
@@ -168,13 +246,35 @@ async function resolveOne(
 ): Promise<Resolved> {
   const sel = parseSelector(selector);
   const { tree } = await client.tree(windowId);
-  const hits = findAll(tree, sel);
+  let hits = outermost(tree, findAll(tree, sel));
   if (hits.length === 0) return { error: `No node matches selector: ${selector}` };
+  if (hits.length > 1) {
+    // Prefer what a finger could actually reach (e.g. not a screen covered by another).
+    const reachable = hits.filter((n) => n.hittable !== false);
+    if (reachable.length > 0) hits = reachable;
+  }
   if (hits.length > 1) {
     const ids = hits.map((n) => n.id).join(", ");
     return { error: `Selector ${selector} is ambiguous (${hits.length} matches: ${ids})` };
   }
   return { node: hits[0] };
+}
+
+/**
+ * Drops matches nested inside another match: an RN Pressable takes its label from the
+ * Text inside it, so both match `"Save"` but they are one element.
+ */
+function outermost(root: UINode, hits: UINode[]): UINode[] {
+  if (hits.length < 2) return hits;
+  const set = new Set(hits);
+  const out: UINode[] = [];
+  const walk = (node: UINode, insideHit: boolean) => {
+    const isHit = set.has(node);
+    if (isHit && !insideHit) out.push(node);
+    for (const child of node.children ?? []) walk(child, insideHit || isHit);
+  };
+  walk(root, false);
+  return out;
 }
 
 function describe(node: UINode): string {
@@ -190,6 +290,7 @@ function outline(node: UINode, depth = 0): string {
   if (node.label) bits.push(JSON.stringify(node.label));
   if (node.value !== undefined) bits.push(`= ${JSON.stringify(node.value)}`);
   bits.push(`#${node.id}`);
+  if (node.hittable === false) bits.push("(covered)");
   const line = `${pad}${bits.join(" ")}`;
   const kids = (node.children ?? []).map((c) => outline(c, depth + 1));
   return [line, ...kids].join("\n");

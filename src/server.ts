@@ -25,11 +25,18 @@ export function createServer(client: HarnessClient): McpServer {
       description:
         "Launch the target app and wait for its harness to come up. Pass a .app bundle path " +
         "(opened via `open`, which reuses an already-running instance instead of duplicating it) " +
-        "or a plain executable path (spawned directly).",
+        "or a plain executable path (spawned directly). Set `simulator` to install and launch an " +
+        "iOS Simulator build (.app from Debug-iphonesimulator) on that simulator via `xcrun simctl`.",
       inputSchema: {
         path: z.string().describe("Path to a .app bundle or an executable."),
         args: z.array(z.string()).optional().describe("Extra CLI args passed to the app."),
         env: z.record(z.string()).optional().describe("Extra environment variables."),
+        simulator: z
+          .string()
+          .optional()
+          .describe(
+            'iOS Simulator device UDID, or "booted" for the booted one. Must already be booted.',
+          ),
         waitMs: z
           .number()
           .optional()
@@ -118,6 +125,43 @@ export function createServer(client: HarnessClient): McpServer {
       inputSchema: { name: z.string() },
     },
     wrap(tools.invokeAction, client),
+  );
+
+  server.registerTool(
+    "tap_at",
+    {
+      title: "Tap at point",
+      description:
+        "Tap at a point in window coordinates (the same space as node frames) with a real " +
+        "synthesized touch. Fallback for things a selector can't reach. iOS harness only.",
+      inputSchema: {
+        x: z.number(),
+        y: z.number(),
+        window: z.string().optional().describe("Window id; defaults to the key window."),
+      },
+    },
+    wrap(tools.tapAt, client),
+  );
+
+  server.registerTool(
+    "scroll",
+    {
+      title: "Scroll",
+      description:
+        "Scroll with a synthesized drag (no momentum). `selector` picks the scroll view: the " +
+        "node itself, a scroll view inside it, or its nearest scrolling ancestor; omit it for " +
+        "the largest visible scroll view. `down` reveals content below. iOS harness only.",
+      inputSchema: {
+        selector: z.string().optional(),
+        direction: z.enum(["up", "down", "left", "right"]),
+        amount: z
+          .number()
+          .optional()
+          .describe("Distance in points. Default: 70% of the scroll view's visible size."),
+        window: z.string().optional(),
+      },
+    },
+    wrap(tools.scroll, client),
   );
 
   server.registerTool(

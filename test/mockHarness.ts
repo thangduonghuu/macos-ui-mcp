@@ -141,6 +141,18 @@ export async function startMockHarness(opts: MockOptions = {}): Promise<MockHarn
         return send(200, opts.failActions ? { ok: false, detail: "forced failure" } : { ok: true });
       }
 
+      if (method === "POST" && url.pathname === "/tapAt") {
+        const { x, y } = JSON.parse((await readBody(req)) || "{}");
+        calls.push(`POST /tapAt ${x},${y}`);
+        return send(200, opts.failActions ? { ok: false, detail: "forced failure" } : { ok: true });
+      }
+
+      if (method === "POST" && url.pathname === "/scroll") {
+        const { node, direction, amount } = JSON.parse((await readBody(req)) || "{}");
+        calls.push(`POST /scroll ${node ?? "-"} ${direction} ${amount ?? "-"}`);
+        return send(200, opts.failActions ? { ok: false, detail: "forced failure" } : { ok: true });
+      }
+
       return send(404, { error: "not found" });
     } catch (err) {
       return send(500, { error: err instanceof Error ? err.message : String(err) });

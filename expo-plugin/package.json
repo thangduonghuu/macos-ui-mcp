@@ -1,0 +1,14 @@
+{
+  "name": "app-mcp-expo-plugin",
+  "version": "0.1.0",
+  "description": "Expo config plugin that embeds the macos-ui-mcp harness in Debug iOS builds.",
+  "license": "MIT",
+  "main": "app.plugin.js",
+  "files": [
+    "app.plugin.js",
+    "plugin.js"
+  ],
+  "peerDependencies": {
+    "expo": "*"
+  }
+}

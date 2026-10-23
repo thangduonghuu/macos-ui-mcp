@@ -43,8 +43,15 @@ final class HTTPServer {
     func start() throws {
         let params = NWParameters.tcp
         params.allowLocalEndpointReuse = true
+        #if os(iOS)
+        // acceptLocalOnly resets every connection in the iOS Simulator; binding to the
+        // loopback address keeps the same guarantee.
+        params.requiredLocalEndpoint = .hostPort(host: "127.0.0.1", port: port)
+        let listener = try NWListener(using: params)
+        #else
         params.acceptLocalOnly = true
         let listener = try NWListener(using: params, on: port)
+        #endif
         listener.newConnectionHandler = { [weak self] connection in
             self?.accept(connection)
         }

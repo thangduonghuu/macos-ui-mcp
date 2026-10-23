@@ -17,6 +17,8 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "test:e2e": "npm run build:showcase && E2E=1 vitest run test/e2e.test.ts",
+    "test:e2e:ios": "./showcase-ios/build.sh && E2E_IOS=1 vitest run test/e2e-ios.test.ts",
+    "test:e2e:rn": "E2E_RN=1 vitest run test/e2e-rn.test.ts",
     "build:harness": "swift build --package-path swift-harness",
     "build:showcase": "swift build --package-path showcase",
     "typecheck": "tsc -p tsconfig.json --noEmit"

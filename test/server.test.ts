@@ -39,6 +39,8 @@ describe("MCP server", () => {
         "launch_app",
         "list_windows",
         "screenshot",
+        "scroll",
+        "tap_at",
         "type",
         "wait_for",
       ].sort(),
